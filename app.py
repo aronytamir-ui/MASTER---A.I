@@ -11,7 +11,7 @@ st.markdown("""
     .main { background-color: #0e1117; color: white; }
     .stButton>button { width: 100%; border-radius: 5px; background-color: #4CAF50; color: white; }
     </style>
-    """, unsafe_check_context=True)
+    """, unsafe_allow_html=True)
 
 # 3. בדיקת מפתח ה-API מה-Secrets
 if "OPENROUTER_API_KEY" not in st.secrets:
@@ -62,5 +62,6 @@ if prompt := st.chat_input("איך אני יכול לעזור היום?"):
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
             except Exception as e:
                 st.error(f"שגיאה בהתחברות לבינה המלאכותית. וודא שהמפתח תקין.")
+
 
 

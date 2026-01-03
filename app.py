@@ -1,64 +1,102 @@
 import streamlit as st
 import requests
+import PyPDF2
 import base64
 
 # הגדרות דף
-st.set_page_config(page_title="Master AI", layout="wide")
+st.set_page_config(page_title="Master AI", layout="wide", page_icon="🪄")
 
-# עיצוב RTL
+# עיצוב RTL ותצוגה נקייה
 st.markdown("""
     <style>
-    .main, .stChatMessage, p, h1, h2, div { direction: RTL; text-align: right; }
-    img { border-radius: 15px; box-shadow: 0px 4px 10px rgba(0,0,0,0.5); }
+    .main, .stChatMessage, p, h1, h2, div, li { direction: RTL; text-align: right; }
+    .stChatInputContainer { direction: RTL; }
+    button[data-testid="stChatInputSubmit"] { left: 10px; right: auto; }
+    img { border-radius: 15px; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); margin: 10px 0; }
+    .stIFrame { border-radius: 10px; border: 1px solid #444; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🪄 Master AI - יצירת אמנות")
+# פונקציות עזר לקבצים
+def extract_pdf(file):
+    try:
+        pdf = PyPDF2.PdfReader(file)
+        return " ".join([p.extract_text() for p in pdf.pages])
+    except: return ""
 
-# בחירת מודל (הוספתי מנוע נוסף למקרה של חסימה)
-engine = st.sidebar.selectbox("בחר מנוע יצירה:", ["מנוע 1 (Pollinations)", "מנוע 2 (Stable Diffusion)"])
+# --- תפריט צד ---
+with st.sidebar:
+    st.title("🚀 Master AI Panel")
+    mode = st.radio("בחר פעולה:", ["🔍 צ'אט וניתוח קבצים", "🎨 יצירת תמונה"])
+    st.divider()
+    uploaded_file = st.file_uploader("העלה קובץ (PDF/Text)", type=["pdf", "txt"])
+    if st.button("🗑️ נקה הכל"):
+        st.session_state.messages = []
+        st.rerun()
 
-prompt = st.text_input("תאר את התמונה שברצונך ליצור (עדיף באנגלית):", "A beautiful sunset over the ocean")
+# אתחול הודעות
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-if st.button("✨ צור תמונה עכשיו"):
-    if prompt:
-        with st.spinner("ה-AI בתהליך יצירה..."):
-            encoded_prompt = requests.utils.quote(prompt)
-            
-            # בחירת כתובת ה-URL לפי המנוע
-            if "1" in engine:
+# הצגת היסטוריה
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"], unsafe_allow_html=True)
+        if "img_url" in m:
+            st.markdown(f'<img src="{m["img_url"]}" width="100%">', unsafe_allow_html=True)
+
+# קלט משתמש
+if prompt := st.chat_input("איך אני יכול לעזור?"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        if mode == "🎨 יצירת תמונה":
+            with st.spinner("יוצר אמנות..."):
+                encoded_prompt = requests.utils.quote(prompt)
+                # שימוש במנוע שעבד לנו בצילום המסך
                 img_url = f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&nologo=true"
-            else:
-                img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+                
+                # הצגה בשיטה המנצחת
+                st.markdown(f'<img src="{img_url}" width="100%">', unsafe_allow_html=True)
+                st.markdown(f"🔗 [קישור ישיר לתמונה]({img_url})")
+                
+                # שמירה להיסטוריה
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": f"הנה התמונה שיצרתי עבור: **{prompt}**",
+                    "img_url": img_url
+                })
+        
+        else: # מצב צ'אט
+            with st.spinner("חושב..."):
+                try:
+                    api_key = st.secrets.get("OPENROUTER_API_KEY")
+                    context = extract_pdf(uploaded_file) if uploaded_file else ""
+                    
+                    res = requests.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": "google/gemini-2.0-flash-exp:free",
+                            "messages": [{"role": "user", "content": f"Context: {context}\n\nQuestion: {prompt}\nענה בעברית."}]
+                        }
+                    )
+                    data = res.json()
+                    if "choices" in data:
+                        ans = data['choices'][0]['message']['content']
+                        st.markdown(ans)
+                        st.session_state.messages.append({"role": "assistant", "content": ans})
+                    else:
+                        st.error("ה-AI לא הגיב כראוי. בדוק את המפתח ב-Secrets.")
+                except Exception as e:
+                    st.error(f"שגיאה בחיבור: {e}")
 
-            # הצגת הקישור לבדיקה
-            st.write(f"🔗 [קישור ישיר לתמונה למקרה שלא נטען]({img_url})")
-
-            # ניסיון הצגה בטוח ב-HTML (שיטה שעוקפת הרבה חסימות דפדפן)
-            html_code = f"""
-            <div style="display: flex; justify-content: center;">
-                <img src="{img_url}" width="700" style="border-radius: 15px;">
-            </div>
-            """
-            st.markdown(html_code, unsafe_allow_html=True)
-            
-            # כפתור הורדה משופר
-            try:
-                # שימוש ב-User-Agent כדי להתחזות לדפדפן רגיל ולמנוע חסימה
-                headers = {"User-Agent": "Mozilla/5.0"}
-                res = requests.get(img_url, headers=headers, timeout=20)
-                if res.status_code == 200:
-                    st.download_button("📥 הורד תמונה למחשב", res.content, "master_ai.png", "image/png")
-                else:
-                    st.error("השרת חסם את הגישה להורדה, נסה להשתמש בקישור הישיר.")
-            except:
-                st.info("ניתן לשמור את התמונה באמצעות לחיצה ימנית עליה ושמירה.")
-    else:
-        st.warning("נא להזין תיאור לתמונה.")
-
-st.divider()
-st.info("טיפ: אם התמונה לא מופיעה, נסה להחליף מנוע בתפריט הצד או ללחוץ על הקישור הישיר.")
-
+# תצוגה מקדימה ל-PDF בסידבר
+if uploaded_file and mode == "🔍 צ'אט וניתוח קבצים":
+    with st.sidebar:
+        st.success("קובץ נטען בהצלחה!")
 
 
 

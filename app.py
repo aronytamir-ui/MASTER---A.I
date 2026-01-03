@@ -2,12 +2,12 @@ import streamlit as st
 import requests
 import PyPDF2
 import pandas as pd
-import io
+import base64
 
 # הגדרות דף
 st.set_page_config(page_title="Master AI", page_icon="🪄", layout="wide")
 
-# CSS לעברית ותיקון ממשק
+# CSS לעברית ותצוגה
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap');
@@ -18,11 +18,17 @@ st.markdown("""
     }
     .stChatInputContainer { direction: RTL; }
     button[data-testid="stChatInputSubmit"] { left: 10px; right: auto; }
-    .stImage > img { border-radius: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.3); }
     </style>
     """, unsafe_allow_html=True)
 
-# פונקציה לקריאת קבצים
+# פונקציה להצגת PDF בתצוגה מקדימה
+def display_pdf(file):
+    base64_pdf = base64.b64encode(file.read()).decode('utf-8')
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="400" type="application/pdf"></iframe>'
+    st.markdown(pdf_display, unsafe_allow_html=True)
+    file.seek(0) # מחזיר את הסמן לתחילת הקובץ לקריאה עתידית
+
+# פונקציה לקריאת תוכן קבצים
 def process_file(file):
     name = file.name.lower()
     try:
@@ -37,32 +43,23 @@ def process_file(file):
     except Exception as e:
         return f"שגיאה בקריאת קובץ: {e}"
 
-# פונקציה לקריאה ל-AI (OpenRouter)
-def call_openrouter(prompt):
-    try:
-        api_key = st.secrets["OPENROUTER_API_KEY"]
-        headers = {"Authorization": f"Bearer {api_key}"}
-        payload = {
-            "model": "google/gemini-2.0-flash-exp:free",
-            "messages": [{"role": "user", "content": prompt}]
-        }
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content']
-    except Exception as e:
-        return f"שגיאה בחיבור לשרת. וודא שהמפתח ב-Secrets תקין."
-
 # --- תפריט צד ---
 with st.sidebar:
     st.title("🚀 Master AI Panel")
-    mode = st.radio("בחר פעולה:", [
-        "🔍 צ'אט וניתוח קבצים", 
-        "🎨 יצירת תמונה", 
-        "🎬 יצירת וידאו (בקרוב)", 
-        "🎵 יצירת מוזיקה (בקרוב)"
-    ])
+    mode = st.radio("בחר פעולה:", ["🔍 צ'אט וניתוח קבצים", "🎨 יצירת תמונה", "🎬 יצירת וידאו", "🎵 יצירת מוזיקה"])
     st.divider()
-    uploaded_file = st.file_uploader("צרף קובץ לעבודה", type=["pdf", "docx", "xlsx", "csv", "txt"])
+    uploaded_file = st.file_uploader("צרף קובץ", type=["pdf", "xlsx", "csv", "txt"])
+    
+    # הצגת תצוגה מקדימה בסידבר אם הועלה קובץ
+    if uploaded_file and mode == "🔍 צ'אט וניתוח קבצים":
+        st.subheader("תצוגה מקדימה לקובץ:")
+        if uploaded_file.name.lower().endswith('.pdf'):
+            display_pdf(uploaded_file)
+        elif uploaded_file.name.lower().endswith(('.xlsx', '.csv')):
+            df = pd.read_excel(uploaded_file) if 'xls' in uploaded_file.name else pd.read_csv(uploaded_file)
+            st.dataframe(df.head(10)) # מציג את 10 השורות הראשונות של האקסל
+    
+    st.divider()
     if st.button("🗑️ נקה הכל"):
         st.session_state.messages = []
         st.rerun()
@@ -84,41 +81,33 @@ if prompt := st.chat_input("איך אני יכול לעזור?"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        ans = ""
-        image_url = None
-        
         if mode == "🎨 יצירת תמונה":
-            with st.spinner("מצייר עבורך..."):
+            with st.spinner("מצייר..."):
                 encoded_prompt = requests.utils.quote(prompt)
-                image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&seed=42"
-                ans = f"הנה התמונה שיצרתי עבור: '{prompt}'"
-                st.markdown(ans)
-                st.image(image_url)
-                
-                # כפתור הורדה ישירה לתמונה
-                img_data = requests.get(image_url).content
-                st.download_button(label="📥 הורד תמונה למחשב", data=img_data, file_name="generated_image.png", mime="image/png")
+                img_url = f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&seed=42"
+                st.image(img_url)
+                # הורדה תקינה
+                img_data = requests.get(img_url).content
+                st.download_button("📥 הורד תמונה", img_data, "image.png", "image/png")
+                ans = "התמונה מוכנה!"
         
         elif mode == "🔍 צ'אט וניתוח קבצים":
             with st.spinner("מנתח..."):
-                file_data = process_file(uploaded_file) if uploaded_file else ""
-                full_prompt = f"Context: {file_data}\n\nUser Question: {prompt}\nענה בעברית."
-                ans = call_openrouter(full_prompt)
+                file_text = process_file(uploaded_file) if uploaded_file else ""
+                api_key = st.secrets["OPENROUTER_API_KEY"]
+                headers = {"Authorization": f"Bearer {api_key}"}
+                payload = {
+                    "model": "google/gemini-2.0-flash-exp:free",
+                    "messages": [{"role": "user", "content": f"Context: {file_text}\n\nQuestion: {prompt}"}]
+                }
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+                ans = res.json()['choices'][0]['message']['content']
                 st.markdown(ans)
         else:
-            ans = f"מצב {mode} יהיה זמין בקרוב עם חיבור למודלי וידאו ומוזיקה מתקדמים."
+            ans = f"מצב {mode} בפיתוח."
             st.markdown(ans)
         
-        # שמירת ההודעה
-        new_msg = {"role": "assistant", "content": ans}
-        if image_url:
-            new_msg["image_url"] = image_url
-        st.session_state.messages.append(new_msg)
-
-# כפתור הורדה להיסטוריית הצ'אט
-if st.session_state.messages:
-    history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-    st.sidebar.download_button("💾 שמור היסטוריית צ'אט", history, file_name="chat_log.txt")
+        st.session_state.messages.append({"role": "assistant", "content": ans})
 
 
 

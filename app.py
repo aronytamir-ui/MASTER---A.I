@@ -2,82 +2,77 @@ import streamlit as st
 import requests
 import PyPDF2
 
-# הגדרות דף
-st.set_page_config(page_title="Master AI", page_icon="🤖", layout="wide")
+# הגדרות דף - חייב להיות בשורה הראשונה
+st.set_page_config(page_title="Master AI", layout="wide")
 
-# עיצוב CSS - תיקון unsafe_allow_html
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    .stButton>button { width: 100%; border-radius: 5px; background-color: #4CAF50; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# בדיקת מפתח API
+# בדיקת מפתח ב-Secrets
 if "OPENROUTER_API_KEY" not in st.secrets:
-    st.error("חסר מפתח API ב-Secrets")
+    st.error("שגיאה: המפתח לא נמצא ב-Secrets של Streamlit")
     st.stop()
 
 api_key = st.secrets["OPENROUTER_API_KEY"]
 
-# פונקציה לקריאת טקסט מ-PDF
-def get_pdf_text(file):
+# פונקציה פשוטה לקריאת PDF
+def read_pdf(file):
     pdf_reader = PyPDF2.PdfReader(file)
     text = ""
     for page in pdf_reader.pages:
-        text += page.extract_text()
+        content = page.extract_text()
+        if content:
+            text += content
     return text
 
-# תפריט צד
-with st.sidebar:
-    st.title("🛠️ הגדרות")
-    uploaded_file = st.file_uploader("לניתוח PDF העלה קובץ", type="pdf")
-    if st.button("נקה היסטוריית צ'אט"):
-        st.session_state.messages = []
-        st.rerun()
+# ממשק משתמש
+st.title("🤖 Master AI")
 
-# ניהול היסטוריית הודעות
+with st.sidebar:
+    st.header("הגדרות")
+    uploaded_file = st.file_uploader("העלה קובץ PDF", type="pdf")
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-st.title("🤖 Master AI")
-st.caption("העוזר האישי החכם שלך לסיכום קבצים ומענה על שאלות")
-
-# הצגת הודעות קודמות
+# הצגת היסטוריה
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# לוגיקה של שליחת הודעה
-if prompt := st.chat_input("איך אני יכול לעזור היום?"):
+# כניסת משתמש
+if prompt := st.chat_input("שאל אותי משהו..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # הכנת ההקשר (Context) מה-PDF
-    pdf_content = ""
-    if uploaded_file:
-        pdf_content = f"\n\nמידע מהקובץ שהועלה:\n{get_pdf_text(uploaded_file)}\n\n"
-
+    # שליחה ל-AI
     with st.chat_message("assistant"):
-        with st.spinner("מנתח נתונים..."):
+        with st.spinner("מעבד נתונים..."):
+            # אם יש קובץ, נשאב ממנו את הטקסט
+            file_context = ""
+            if uploaded_file:
+                file_context = f"תוכן הקובץ המצורף: {read_pdf(uploaded_file)}\n\n"
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # בניית הפרומפט המלא
+            full_prompt = f"{file_context}שאלה: {prompt}"
+            
+            data = {
+                "model": "google/gemini-2.0-flash-exp:free",
+                "messages": [{"role": "user", "content": full_prompt}]
+            }
+            
             try:
-                headers = {"Authorization": f"Bearer {api_key}"}
-                # כאן הקסם: אנחנו מחברים את תוכן ה-PDF לשאלה של המשתמש
-                full_query = f"{pdf_content} המשתמש שואל: {prompt}"
-                
-                payload = {
-                    "model": "google/gemini-2.0-flash-exp:free",
-                    "messages": [{"role": "user", "content": full_query}]
-                }
-                
-                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-                ans = response.json()['choices'][0]['message']['content']
-                
-                st.markdown(ans)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
+                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+                response.raise_for_status()
+                result = response.json()['choices'][0]['message']['content']
+                st.markdown(result)
+                st.session_state.messages.append({"role": "assistant", "content": result})
             except Exception as e:
-                st.error("שגיאה בחיבור לבינה המלאכותית. בדוק את ה-API Key.")
+                st.error(f"קרתה שגיאה: {str(e)}")
+
 
 
 
